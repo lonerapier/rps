@@ -11,7 +11,9 @@ contract RPSGameInstance {
         WaitingForPlayersToBet,
         WaitingForPlayersToSubmitMove,
         WaitingForPlayersToReveal,
-        Finished
+        Finished,
+        Withdrawn,
+        Rematch
     }
 
     enum PlayerState {
@@ -19,7 +21,8 @@ contract RPSGameInstance {
         Betted,
         SubmittedMove,
         Revealed,
-        Rematch
+        Rematch,
+        Withdrawn
     }
 
     struct PlayerGameData {
@@ -34,7 +37,6 @@ contract RPSGameInstance {
         address playerB;
         address winner;
         uint256 betAmount;
-        uint256 totalAmount;
         GameState state;
         PlayerGameData[2] playerGameData;
     }
@@ -44,6 +46,7 @@ contract RPSGameInstance {
     bytes32 public constant PAPER = keccak256(abi.encodePacked(uint8(2))); // PAPER
     bytes32 public constant SCISSORS = keccak256(abi.encodePacked(uint8(3))); // SCISSORS
 
+    uint256 public incentiveStartTime;
     address private owner;
     Game[] public games;
     mapping(address => uint256) private gamesMapping;
@@ -64,6 +67,7 @@ contract RPSGameInstance {
         address playerB,
         address winner
     );
+    event FundsWithdrawn(address player, uint256 gameId, uint256 winnings);
 
     modifier isValidGamePlayer(uint256 _gameId, address _player) {
         require(
@@ -79,9 +83,17 @@ contract RPSGameInstance {
         _;
     }
 
-    function initialize(address _player, address tokenAddress) public {
+    function initialize(address _player, address tokenAddress) external {
         owner = _player;
         token = IERC20(tokenAddress);
+
+        // Push a dummy game
+        Game memory _game;
+        _game.playerA = address(0);
+        _game.playerB = address(0);
+        _game.betAmount = 0;
+        _game.state = GameState.Finished;
+        games.push(_game);
     }
 
     function createGame(address _player, uint256 _betAmount)
@@ -91,15 +103,31 @@ contract RPSGameInstance {
         require(_player != owner, "PlayerA and PlayerB different");
         require(_player != address(0), "PlayerA or PlayerB null");
 
-        uint256 gameId = games.length;
-        Game memory _game;
-        _game.playerA = owner;
-        _game.playerB = _player;
-        _game.betAmount = _betAmount;
-        _game.state = GameState.GameCreated;
-        games.push(_game);
+        uint256 gameId = getGameId(_player);
+        if (gameId == 0) {
+            gameId == games.length;
 
-        gamesMapping[_player] = gameId;
+            Game memory _game;
+            _game.playerA = owner;
+            _game.playerB = _player;
+            _game.betAmount = _betAmount;
+            _game.state = GameState.GameCreated;
+            games.push(_game);
+
+            gamesMapping[_player] = gameId;
+        } else {
+            require(
+                games[gameId].state == GameState.Withdrawn,
+                "players not withdrawn"
+            );
+
+            games[gameId].betAmount = _betAmount;
+            games[gameId].state = GameState.GameCreated;
+            games[gameId].playerGameData[0].playerState = PlayerState
+                .Initialized;
+            games[gameId].playerGameData[1].playerState = PlayerState
+                .Initialized;
+        }
 
         emit GameCreated(gameId, owner, _player, _betAmount);
 
@@ -112,6 +140,12 @@ contract RPSGameInstance {
         isValidGamePlayer(_gameId, msg.sender)
         returns (bool)
     {
+        require(
+            games[_gameId].state == GameState.GameCreated ||
+                games[_gameId].state == GameState.WaitingForPlayersToBet,
+            "Game not created yet"
+        );
+
         uint8 playerIndex = msg.sender == owner ? 0 : 1;
 
         require(
@@ -136,7 +170,6 @@ contract RPSGameInstance {
         );
 
         if (success) {
-            games[_gameId].totalAmount += games[_gameId].betAmount;
             games[_gameId].playerGameData[playerIndex].playerState = PlayerState
                 .Betted;
 
@@ -220,9 +253,10 @@ contract RPSGameInstance {
         );
 
         if (_move > 3) {
-            games[_gameId].playerGameData[playerIndex].move = bytes32(0);
+            delete games[_gameId].playerGameData[playerIndex].move;
+            games[_gameId].state = GameState.WaitingForPlayersToSubmitMove;
             games[_gameId].playerGameData[playerIndex].playerState = PlayerState
-                .Initialized;
+                .Betted;
         }
 
         games[_gameId].playerGameData[playerIndex].move = keccak256(
@@ -273,6 +307,10 @@ contract RPSGameInstance {
         );
     }
 
+    /// @notice player can request for rematch after match has ended
+    /// @dev if both player confirm, game state changes to Rematch
+    /// Either player can reject this by withdrawing the amount
+    /// Bet amount will be same if both players agree for rematch
     function requestRematch(uint256 _gameId)
         external
         isValidGame(_gameId)
@@ -294,6 +332,127 @@ contract RPSGameInstance {
             games[_gameId].playerGameData[1].playerState == PlayerState.Rematch
         ) {
             games[_gameId].state = GameState.WaitingForPlayersToBet;
+            games[_gameId].playerGameData[0].move = bytes32(0);
+            games[_gameId].playerGameData[1].move = bytes32(0);
+        }
+    }
+
+    /// @notice winner can start a new game with bet amount as his winnings
+    function rematchWithWinnings(uint256 _gameId)
+        external
+        isValidGame(_gameId)
+    {
+        require(
+            msg.sender == games[_gameId].winner,
+            "only winner can proceed."
+        );
+        require(
+            games[_gameId].state == GameState.Finished,
+            "game not finished yet"
+        );
+
+        uint8 playerIndex = msg.sender == owner ? 0 : 1;
+
+        games[_gameId].state = GameState.WaitingForPlayersToBet;
+        games[_gameId].betAmount = 2 * games[_gameId].betAmount;
+        games[_gameId].winner = address(0);
+        games[_gameId].playerGameData[playerIndex].playerState = PlayerState
+            .Betted;
+    }
+
+    /// @notice withdraw winnings after the game ended
+    /// @dev either player can withdraw bet amount to both players after game has finished
+    function withdrawWinnings(uint256 _gameId)
+        external
+        isValidGame(_gameId)
+        isValidGamePlayer(_gameId, msg.sender)
+    {
+        require(
+            games[_gameId].state == GameState.Finished,
+            "Game not finished yet"
+        );
+        if (games[_gameId].betAmount == 0) {
+            games[_gameId].state = GameState.Withdrawn;
+            return;
+        }
+
+        uint8 playerIndex = msg.sender == owner ? 0 : 1;
+
+        require(
+            games[_gameId].state != GameState.Withdrawn,
+            "Already withdrawn"
+        );
+        require(
+            games[_gameId].playerGameData[playerIndex].playerState !=
+                PlayerState.Rematch,
+            "rematch requested"
+        );
+
+        games[_gameId].state = GameState.Withdrawn;
+
+        if (games[_gameId].winner != address(0)) {
+            require(games[_gameId].winner == msg.sender, "Oops, winners only");
+            token.transfer(msg.sender, 2 * games[_gameId].betAmount);
+            emit FundsWithdrawn(
+                msg.sender,
+                _gameId,
+                2 * games[_gameId].betAmount
+            );
+        } else {
+            token.transfer(games[_gameId].playerA, games[_gameId].betAmount);
+            emit FundsWithdrawn(
+                games[_gameId].playerA,
+                _gameId,
+                games[_gameId].betAmount
+            );
+
+            token.transfer(games[_gameId].playerB, games[_gameId].betAmount);
+            emit FundsWithdrawn(
+                games[_gameId].playerB,
+                _gameId,
+                games[_gameId].betAmount
+            );
+        }
+    }
+
+    /// @notice withdraw bet amount before game starts
+    /// @dev withdraws both players amount and changes game state to Withdrawn
+    function withdrawBeforeGameStarts(uint256 _gameId)
+        external
+        isValidGame(_gameId)
+        isValidGamePlayer(_gameId, msg.sender)
+    {
+        require(
+            games[_gameId].state == GameState.GameCreated ||
+                games[_gameId].state == GameState.WaitingForPlayersToBet,
+            "game not in required phase"
+        );
+        if (games[_gameId].betAmount == 0) {
+            games[_gameId].state = GameState.Withdrawn;
+            return;
+        }
+
+        games[_gameId].state = GameState.Withdrawn;
+
+        if (
+            games[_gameId].playerGameData[0].playerState == PlayerState.Betted
+        ) {
+            token.transfer(games[_gameId].playerA, games[_gameId].betAmount);
+            emit FundsWithdrawn(
+                games[_gameId].playerA,
+                _gameId,
+                games[_gameId].betAmount
+            );
+        }
+        if (
+            games[_gameId].playerGameData[1].playerState == PlayerState.Betted
+        ) {
+            token.transfer(games[_gameId].playerB, games[_gameId].betAmount);
+            emit FundsWithdrawn(
+                games[_gameId].playerB,
+                _gameId,
+                games[_gameId].betAmount
+            );
         }
     }
 
