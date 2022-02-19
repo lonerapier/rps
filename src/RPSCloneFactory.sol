@@ -15,13 +15,14 @@ contract RPSCloneFactory {
         rpsImplementationAddress = _address;
     }
 
-    function createRPSGameInstance(address _tokenAddress) external returns (address) {
-        require(rpsCloneAddresses[msg.sender] == address(0), "Only one RPS game instance");
+    function createRPSGameInstance(address creator, address _tokenAddress) external returns (address) {
+        require(rpsCloneAddresses[creator] == address(0), "Only one RPS game instance");
 
         address cloneAddress = Clones.clone(rpsImplementationAddress);
-        RPSGameInstance(cloneAddress).initialize(msg.sender, _tokenAddress);
+        RPSGameInstance(cloneAddress).initialize(creator, _tokenAddress);
+        rpsCloneAddresses[creator] = cloneAddress;
 
-        emit GameCreated(msg.sender, cloneAddress, _tokenAddress);
+        emit GameCreated(creator, cloneAddress, _tokenAddress);
         return cloneAddress;
     }
 

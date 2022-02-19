@@ -28,8 +28,6 @@ contract RPSGameInstance is Initializable {
     }
 
     struct PlayerGameData {
-        bool deposited;
-        bool revealed;
         PlayerState playerState;
         bytes32 move;
     }
@@ -117,12 +115,11 @@ contract RPSGameInstance is Initializable {
         token = IERC20(tokenAddress);
 
         // Push a dummy game
-        Game memory _game;
+        Game storage _game = games.push();
         _game.playerA = address(0);
         _game.playerB = address(0);
         _game.betAmount = 0;
         _game.state = GameState.Finished;
-        games.push(_game);
     }
 
     /// ---------------------------------------------------------------
@@ -142,12 +139,11 @@ contract RPSGameInstance is Initializable {
         if (gameId == 0) {
             gameId == games.length;
 
-            Game memory _game;
+            Game storage _game = games.push();
             _game.playerA = owner;
             _game.playerB = _player;
             _game.betAmount = _betAmount;
             _game.state = GameState.GameCreated;
-            games.push(_game);
 
             gamesMapping[_player] = gameId;
         } else {
@@ -416,17 +412,18 @@ contract RPSGameInstance is Initializable {
         return gamesMapping[_player];
     }
 
-    function getGameBetAmount(uint256 _gameId) public view returns (uint256) {
+    function getGameBetAmount(uint256 _gameId) public view isValidGame(_gameId) returns (uint256) {
         return games[_gameId].betAmount;
     }
 
-    function getGamePlayers(uint256 _gameId) public view returns (address, address) {
+    function getGamePlayers(uint256 _gameId) public view isValidGame(_gameId) returns (address, address) {
         return (games[_gameId].playerA, games[_gameId].playerB);
     }
 
     function getGame(uint256 _gameId)
         public
         view
+        isValidGame(_gameId)
         returns (
             address,
             address,
