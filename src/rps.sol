@@ -12,8 +12,7 @@ contract RPSGameInstance {
         WaitingForPlayersToSubmitMove,
         WaitingForPlayersToReveal,
         Finished,
-        Withdrawn,
-        Rematch
+        Withdrawn
     }
 
     enum PlayerState {
@@ -32,11 +31,11 @@ contract RPSGameInstance {
     }
 
     struct Game {
+        GameState state;
         address playerA;
         address playerB;
         address winner;
         uint256 betAmount;
-        GameState state;
         PlayerGameData[2] playerGameData;
     }
 
@@ -44,6 +43,7 @@ contract RPSGameInstance {
     bytes32 public constant ROCK = keccak256(abi.encodePacked(uint8(1))); // ROCK
     bytes32 public constant PAPER = keccak256(abi.encodePacked(uint8(2))); // PAPER
     bytes32 public constant SCISSORS = keccak256(abi.encodePacked(uint8(3))); // SCISSORS
+    uint256 private constant INCENTIVE_DURATION = 1 hours;
 
     uint256 public incentiveStartTime;
     address private owner;
@@ -65,6 +65,27 @@ contract RPSGameInstance {
 
     modifier isValidGame(uint256 _gameId) {
         require(_gameId < games.length, "Game does not exist");
+        _;
+    }
+
+    modifier canIncentivizeOpponent(uint256 _gameId) {
+        uint8 playerIndex = owner == msg.sender ? 0 : 1;
+        uint8 opponentIndex = playerIndex ^ 1;
+
+        if (games[_gameId].state == GameState.WaitingForPlayersToSubmitMove) {
+            require(
+                games[_gameId].playerGameData[playerIndex].playerState == PlayerState.SubmittedMove &&
+                    games[_gameId].playerGameData[opponentIndex].playerState != PlayerState.SubmittedMove,
+                "Cannot incentivize opponent"
+            );
+        }
+        if (games[_gameId].state == GameState.WaitingForPlayersToReveal) {
+            require(
+                games[_gameId].playerGameData[playerIndex].playerState == PlayerState.Revealed &&
+                    games[_gameId].playerGameData[opponentIndex].playerState != PlayerState.Revealed,
+                "Cannot incentivize opponent"
+            );
+        }
         _;
     }
 
@@ -160,11 +181,16 @@ contract RPSGameInstance {
         isValidGame(_gameId)
         isValidGamePlayer(_gameId, msg.sender)
     {
+        uint8 playerIndex = msg.sender == owner ? 0 : 1;
+
         require(games[_gameId].state == GameState.WaitingForPlayersToSubmitMove, "Betting not done");
-        require(games[_gameId].playerGameData[0].playerState == PlayerState.SubmittedMove, "Move already submitted");
+        require(
+            games[_gameId].playerGameData[playerIndex].playerState == PlayerState.SubmittedMove,
+            "Move already submitted"
+        );
         require(_moveHash != bytes32(0), "MoveHash null");
 
-        uint8 playerIndex = msg.sender == owner ? 0 : 1;
+        require(incentiveStartTime == 0 || block.timestamp < incentiveStartTime, "You are late");
 
         games[_gameId].playerGameData[playerIndex].move = _moveHash;
         games[_gameId].playerGameData[playerIndex].playerState = PlayerState.SubmittedMove;
@@ -197,6 +223,7 @@ contract RPSGameInstance {
             games[_gameId].playerGameData[playerIndex].playerState == PlayerState.Revealed,
             "Player already revealed"
         );
+        require(incentiveStartTime == 0 || block.timestamp < incentiveStartTime, "You are late");
 
         bytes32 _moveHash = keccak256(abi.encodePacked(_move, _salt));
         require(_moveHash == games[_gameId].playerGameData[playerIndex].move, "MoveHash invalid");
@@ -244,6 +271,18 @@ contract RPSGameInstance {
         games[_gameId].state = GameState.Finished;
 
         emit GameFinished(_gameId, games[_gameId].playerA, games[_gameId].playerB, games[_gameId].winner);
+    }
+
+    function incentivizePlayer(uint256 _gameId) external isValidGame(_gameId) canIncentivizeOpponent(_gameId) {
+        if (incentiveStartTime == 0) {
+            incentiveStartTime = block.timestamp + INCENTIVE_DURATION;
+        }
+
+        if (incentiveStartTime != 0 && block.timestamp > incentiveStartTime) {
+            games[_gameId].state = GameState.Finished;
+            games[_gameId].winner = msg.sender;
+            emit GameFinished(_gameId, games[_gameId].playerA, games[_gameId].playerB, msg.sender);
+        }
     }
 
     /// @notice player can request for rematch after match has ended
