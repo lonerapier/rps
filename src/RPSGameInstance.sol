@@ -3,9 +3,13 @@ pragma solidity 0.8.10;
 
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
 
-// import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-contract RPSGameInstance {
+contract RPSGameInstance is Initializable {
+    /// --------------------------------------------------------------
+    /// Structs
+    /// --------------------------------------------------------------
+
     enum GameState {
         GameCreated,
         WaitingForPlayersToBet,
@@ -39,17 +43,9 @@ contract RPSGameInstance {
         PlayerGameData[2] playerGameData;
     }
 
-    // constants
-    bytes32 public constant ROCK = keccak256(abi.encodePacked(uint8(1))); // ROCK
-    bytes32 public constant PAPER = keccak256(abi.encodePacked(uint8(2))); // PAPER
-    bytes32 public constant SCISSORS = keccak256(abi.encodePacked(uint8(3))); // SCISSORS
-    uint256 private constant INCENTIVE_DURATION = 1 hours;
-
-    uint256 public incentiveStartTime;
-    address private owner;
-    Game[] public games;
-    mapping(address => uint256) private gamesMapping;
-    IERC20 public token;
+    /// ---------------------------------------------------------------
+    /// events
+    /// ---------------------------------------------------------------
 
     event GameCreated(uint256 gameId, address playerA, address playerB, uint256 betAmount);
     event GameStarted(uint256 gameId, address playerA, address playerB);
@@ -57,6 +53,29 @@ contract RPSGameInstance {
     event MoveRevealed(address player, uint256 gameId, uint8 move);
     event GameFinished(uint256 gameId, address playerA, address playerB, address winner);
     event FundsWithdrawn(address player, uint256 gameId, uint256 winnings);
+
+    /// ---------------------------------------------------------------
+    /// constants
+    /// ---------------------------------------------------------------
+
+    bytes32 public constant ROCK = keccak256(abi.encodePacked(uint8(1))); // ROCK
+    bytes32 public constant PAPER = keccak256(abi.encodePacked(uint8(2))); // PAPER
+    bytes32 public constant SCISSORS = keccak256(abi.encodePacked(uint8(3))); // SCISSORS
+    uint256 private constant INCENTIVE_DURATION = 1 hours;
+
+    /// ---------------------------------------------------------------
+    /// storage variables
+    /// ---------------------------------------------------------------
+
+    uint256 public incentiveStartTime;
+    address private owner;
+    Game[] public games;
+    mapping(address => uint256) private gamesMapping;
+    IERC20 public token;
+
+    /// ---------------------------------------------------------------
+    /// modifiers
+    /// ---------------------------------------------------------------
 
     modifier isValidGamePlayer(uint256 _gameId, address _player) {
         require(_player == games[_gameId].playerA || _player == games[_gameId].playerB, "Player is not a valid player");
@@ -89,7 +108,11 @@ contract RPSGameInstance {
         _;
     }
 
-    function initialize(address _player, address tokenAddress) external {
+    /// ---------------------------------------------------------------
+    /// initializer
+    /// ---------------------------------------------------------------
+
+    function initialize(address _player, address tokenAddress) external initializer {
         owner = _player;
         token = IERC20(tokenAddress);
 
@@ -102,6 +125,15 @@ contract RPSGameInstance {
         games.push(_game);
     }
 
+    /// ---------------------------------------------------------------
+    /// game functions
+    /// ---------------------------------------------------------------
+
+    /// @notice starts a new game
+    /// @dev cretes a new game for new opponent and reuses previous game if exists
+    /// @param _player opponent address other than the owner
+    /// @param _betAmount amount of tokens to bet
+    /// @return gameId id of the created game
     function createGame(address _player, uint256 _betAmount) external returns (uint256) {
         require(_player != owner, "PlayerA and PlayerB different");
         require(_player != address(0), "PlayerA or PlayerB null");
@@ -376,7 +408,9 @@ contract RPSGameInstance {
         }
     }
 
-    // Public getters
+    /// ---------------------------------------------------------------
+    /// Public getters
+    /// ---------------------------------------------------------------
 
     function getGameId(address _player) public view returns (uint256) {
         return gamesMapping[_player];

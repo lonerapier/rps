@@ -32,6 +32,6 @@
     }
   },
   "lint-staged": {
-    "*": "prettier --write 'src/**/*.sol'"
+    "*.sol": "prettier --write 'src/**/*.sol'"
   }
 }
