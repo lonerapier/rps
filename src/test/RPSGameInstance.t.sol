@@ -38,7 +38,7 @@ contract TestRPSGameInstance is DSTest {
         address _winner,
         uint256 _betAmount,
         RPSGameInstance.GameState _state
-    ) public {
+    ) internal {
         (address playerA, address playerB, address winner, uint256 betAmount, RPSGameInstance.GameState state) = abi
             .decode(gameInstance.getGame(gameId), (address, address, address, uint256, RPSGameInstance.GameState));
 
@@ -53,7 +53,7 @@ contract TestRPSGameInstance is DSTest {
         uint256 gameId,
         address player,
         uint256 betAmount
-    ) public {
+    ) internal {
         token.transfer(player, uint256(100));
 
         vm.prank(player);
@@ -67,7 +67,7 @@ contract TestRPSGameInstance is DSTest {
         uint256 gameId,
         address player,
         bytes32 moveHash
-    ) public {
+    ) internal {
         vm.prank(player);
 
         gameInstance.submitMove(gameId, moveHash);
@@ -78,10 +78,15 @@ contract TestRPSGameInstance is DSTest {
         address player,
         uint8 move,
         bytes32 salt
-    ) public {
+    ) internal {
         vm.prank(player);
 
         gameInstance.revealMove(gameId, move, salt);
+    }
+
+    function gameIncentivize(uint256 gameId, address player) internal {
+        vm.prank(player);
+        gameInstance.incentivizePlayer(gameId);
     }
 
     /// -----------------------------------------------------
@@ -231,5 +236,41 @@ contract TestRPSGameInstance is DSTest {
         gameInstance.requestRematch(1);
 
         gameTest(1, PLAYER_A, PLAYER_B, PLAYER_B, 10, RPSGameInstance.GameState.WaitingForPlayersToBet);
+    }
+
+    function testSubmitMoveIncentivize(bytes32 salt1) public {
+        gameInstance.createGame(PLAYER_B, uint256(10));
+
+        gameDeposit(1, PLAYER_A, uint256(10));
+        gameDeposit(1, PLAYER_B, uint256(10));
+
+        bytes32 playerAMove = keccak256(abi.encodePacked(uint8(1), salt1));
+        gameSubmit(1, PLAYER_A, playerAMove);
+
+        gameIncentivize(1, PLAYER_A);
+
+        vm.warp(block.timestamp + 2 hours);
+
+        gameIncentivize(1, PLAYER_A);
+
+        gameTest(1, PLAYER_A, PLAYER_B, PLAYER_A, 10, RPSGameInstance.GameState.Finished);
+    }
+
+    function testFailSubmitMoveIncentivize(bytes32 salt1, bytes32 salt2) public {
+        gameInstance.createGame(PLAYER_B, uint256(10));
+
+        gameDeposit(1, PLAYER_A, uint256(10));
+        gameDeposit(1, PLAYER_B, uint256(10));
+
+        bytes32 playerAMove = keccak256(abi.encodePacked(uint8(1), salt1));
+        gameSubmit(1, PLAYER_A, playerAMove);
+
+        vm.prank(PLAYER_A);
+        gameInstance.incentivizePlayer(1);
+
+        vm.warp(block.timestamp + 2 hours);
+
+        bytes32 playerBMove = keccak256(abi.encodePacked(uint8(2), salt2));
+        gameSubmit(1, PLAYER_B, playerBMove);
     }
 }
