@@ -1,12 +1,12 @@
 {
-  "name": "forge-template",
-  "author": "FrankieIsLost",
+  "name": "RPS",
+  "author": "dsam82",
   "version": "1.0.0",
-  "description": "A forge template",
-  "homepage": "https://github.com/FrankieIsLost/forge-template#readme",
+  "description": "Rock Paper Scissors game in solidity using Foundry",
+  "homepage": "https://github.com/dsam82/rps#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FrankieIsLost/forge-template.git"
+    "url": "git+https://github.com/dsam82/rps.git"
   },
   "scripts": {
     "prettier": "prettier --write 'src/**/*.sol'",
@@ -18,7 +18,6 @@
     "lint:check": "npm run prettier:check && npm run solhint:check"
   },
   "devDependencies": {
-    "hardhat": "^2.8.4",
     "prettier": "^2.5.1",
     "prettier-plugin-solidity": "^1.0.0-beta.19",
     "solhint": "^3.3.6"

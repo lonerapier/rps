@@ -19,7 +19,9 @@ contract RPSCloneFactory {
         require(rpsCloneAddresses[creator] == address(0), "Only one RPS game instance");
 
         address cloneAddress = Clones.clone(rpsImplementationAddress);
-        RPSGameInstance(cloneAddress).initialize(creator, _tokenAddress);
+        bool success = RPSGameInstance(cloneAddress).initialize(creator, _tokenAddress);
+
+        require(success, "instance initialization failed");
         rpsCloneAddresses[creator] = cloneAddress;
 
         emit GameCreated(creator, cloneAddress, _tokenAddress);
