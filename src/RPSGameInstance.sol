@@ -24,7 +24,7 @@ contract RPSGameInstance is Initializable {
         Betted,
         SubmittedMove,
         Revealed,
-        Rematch
+        RematchRequested
     }
 
     struct PlayerGameData {
@@ -45,12 +45,13 @@ contract RPSGameInstance is Initializable {
     /// events
     /// ---------------------------------------------------------------
 
-    event GameCreated(uint256 gameId, address playerA, address playerB, uint256 betAmount);
-    event GameStarted(uint256 gameId, address playerA, address playerB);
-    event MoveSubmitted(address player, uint256 gameId, bytes32 move);
-    event MoveRevealed(address player, uint256 gameId, uint8 move);
-    event GameFinished(uint256 gameId, address playerA, address playerB, address winner);
-    event FundsWithdrawn(address player, uint256 gameId, uint256 winnings);
+    event GameInstanceInitialized(address indexed owner);
+    event GameCreated(uint256 indexed gameId, address indexed playerA, address indexed playerB, uint256 betAmount);
+    event GameStarted(uint256 indexed gameId, address indexed playerA, address indexed playerB);
+    event MoveSubmitted(address indexed player, uint256 indexed gameId, bytes32 move);
+    event MoveRevealed(address indexed player, uint256 indexed gameId, uint8 move);
+    event GameFinished(uint256 indexed gameId, address indexed playerA, address indexed playerB, address winner);
+    event FundsWithdrawn(address indexed player, uint256 indexed gameId, uint256 winnings);
 
     /// ---------------------------------------------------------------
     /// constants
@@ -66,7 +67,7 @@ contract RPSGameInstance is Initializable {
     /// ---------------------------------------------------------------
 
     uint256 public incentiveStartTime;
-    address private owner;
+    address public owner;
     Game[] public games;
     mapping(address => uint256) private gamesMapping;
     IERC20 public token;
@@ -110,7 +111,7 @@ contract RPSGameInstance is Initializable {
     /// initializer
     /// ---------------------------------------------------------------
 
-    function initialize(address _player, address tokenAddress) external initializer {
+    function initialize(address _player, address tokenAddress) external initializer returns (bool) {
         owner = _player;
         token = IERC20(tokenAddress);
 
@@ -120,6 +121,9 @@ contract RPSGameInstance is Initializable {
         _game.playerB = address(0);
         _game.betAmount = 0;
         _game.state = GameState.Finished;
+
+        emit GameInstanceInitialized(owner);
+        return true;
     }
 
     /// ---------------------------------------------------------------
@@ -127,7 +131,7 @@ contract RPSGameInstance is Initializable {
     /// ---------------------------------------------------------------
 
     /// @notice starts a new game
-    /// @dev cretes a new game for new opponent and reuses previous game if exists
+    /// @dev creates a new game for new opponent and reuses previous game if exists
     /// @param _player opponent address other than the owner
     /// @param _betAmount amount of tokens to bet
     /// @return gameId id of the created game
@@ -176,7 +180,7 @@ contract RPSGameInstance is Initializable {
         uint8 playerIndex = msg.sender == owner ? 0 : 1;
 
         require(
-            games[_gameId].playerGameData[playerIndex].playerState == PlayerState.Betted,
+            games[_gameId].playerGameData[playerIndex].playerState != PlayerState.Betted,
             "Player already deposited"
         );
         require(token.balanceOf(msg.sender) >= games[_gameId].betAmount, "Not enough tokens");
@@ -213,7 +217,7 @@ contract RPSGameInstance is Initializable {
 
         require(games[_gameId].state == GameState.WaitingForPlayersToSubmitMove, "Betting not done");
         require(
-            games[_gameId].playerGameData[playerIndex].playerState == PlayerState.SubmittedMove,
+            games[_gameId].playerGameData[playerIndex].playerState != PlayerState.SubmittedMove,
             "Move already submitted"
         );
         require(_moveHash != bytes32(0), "MoveHash null");
@@ -248,7 +252,7 @@ contract RPSGameInstance is Initializable {
         uint8 playerIndex = msg.sender == owner ? 0 : 1;
 
         require(
-            games[_gameId].playerGameData[playerIndex].playerState == PlayerState.Revealed,
+            games[_gameId].playerGameData[playerIndex].playerState != PlayerState.Revealed,
             "Player already revealed"
         );
         require(incentiveStartTime == 0 || block.timestamp < incentiveStartTime, "You are late");
@@ -263,6 +267,7 @@ contract RPSGameInstance is Initializable {
         }
 
         games[_gameId].playerGameData[playerIndex].move = keccak256(abi.encodePacked(_move));
+        games[_gameId].playerGameData[playerIndex].playerState = PlayerState.Revealed;
 
         emit MoveRevealed(msg.sender, _gameId, _move);
 
@@ -322,15 +327,31 @@ contract RPSGameInstance is Initializable {
 
         uint8 playerIndex = msg.sender == owner ? 0 : 1;
 
-        games[_gameId].playerGameData[playerIndex].playerState = PlayerState.Rematch;
+        if (games[_gameId].winner == address(0)) {
+            games[_gameId].playerGameData[playerIndex].playerState = PlayerState.Betted;
+
+            if (
+                games[_gameId].playerGameData[0].playerState == PlayerState.Betted &&
+                games[_gameId].playerGameData[1].playerState == PlayerState.Betted
+            ) {
+                games[_gameId].state = GameState.WaitingForPlayersToSubmitMove;
+                return;
+            }
+        } else if (games[_gameId].winner == msg.sender) {
+            games[_gameId].playerGameData[playerIndex].playerState = PlayerState.Betted;
+            token.transfer(msg.sender, games[_gameId].betAmount);
+        } else {
+            games[_gameId].playerGameData[playerIndex].playerState = PlayerState.RematchRequested;
+        }
+
+        uint8 winnerIndex = games[_gameId].winner == owner ? 0 : 1;
+        uint8 loserIndex = winnerIndex == 0 ? 1 : 0;
 
         if (
-            games[_gameId].playerGameData[0].playerState == PlayerState.Rematch &&
-            games[_gameId].playerGameData[1].playerState == PlayerState.Rematch
+            games[_gameId].playerGameData[winnerIndex].playerState == PlayerState.Betted &&
+            games[_gameId].playerGameData[loserIndex].playerState == PlayerState.RematchRequested
         ) {
             games[_gameId].state = GameState.WaitingForPlayersToBet;
-            games[_gameId].playerGameData[0].move = bytes32(0);
-            games[_gameId].playerGameData[1].move = bytes32(0);
         }
     }
 
@@ -359,7 +380,10 @@ contract RPSGameInstance is Initializable {
         uint8 playerIndex = msg.sender == owner ? 0 : 1;
 
         require(games[_gameId].state != GameState.Withdrawn, "Already withdrawn");
-        require(games[_gameId].playerGameData[playerIndex].playerState != PlayerState.Rematch, "rematch requested");
+        require(
+            games[_gameId].playerGameData[playerIndex].playerState != PlayerState.RematchRequested,
+            "rematch requested"
+        );
 
         games[_gameId].state = GameState.Withdrawn;
 
@@ -384,7 +408,9 @@ contract RPSGameInstance is Initializable {
         isValidGamePlayer(_gameId, msg.sender)
     {
         require(
-            games[_gameId].state == GameState.GameCreated || games[_gameId].state == GameState.WaitingForPlayersToBet,
+            games[_gameId].state == GameState.GameCreated ||
+                games[_gameId].state == GameState.WaitingForPlayersToBet ||
+                games[_gameId].state == GameState.WaitingForPlayersToSubmitMove,
             "game not in required phase"
         );
         if (games[_gameId].betAmount == 0) {
@@ -420,17 +446,14 @@ contract RPSGameInstance is Initializable {
         return (games[_gameId].playerA, games[_gameId].playerB);
     }
 
-    function getGame(uint256 _gameId)
-        public
-        view
-        isValidGame(_gameId)
-        returns (
-            address,
-            address,
-            address,
-            uint256
-        )
-    {
-        return (games[_gameId].playerA, games[_gameId].playerB, games[_gameId].winner, games[_gameId].betAmount);
+    function getGame(uint256 _gameId) public view isValidGame(_gameId) returns (bytes memory) {
+        return
+            abi.encode(
+                games[_gameId].playerA,
+                games[_gameId].playerB,
+                games[_gameId].winner,
+                games[_gameId].betAmount,
+                games[_gameId].state
+            );
     }
 }
